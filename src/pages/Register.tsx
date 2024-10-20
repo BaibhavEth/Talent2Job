@@ -7,12 +7,17 @@ const Register: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [userType, setUserType] = useState('jobseeker');
+  const [companyName, setCompanyName] = useState('');
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await axios.post('/api/register', { name, email, password, userType });
+      const userData = { name, email, password, userType };
+      if (userType === 'employer') {
+        Object.assign(userData, { companyName });
+      }
+      const response = await axios.post('/api/register', userData);
       if (response.data && response.data.message) {
         alert(response.data.message);
         navigate(userType === 'jobseeker' ? '/jobseeker-dashboard' : '/employer-dashboard');
@@ -75,6 +80,19 @@ const Register: React.FC = () => {
             <option value="employer">Employer</option>
           </select>
         </div>
+        {userType === 'employer' && (
+          <div>
+            <label htmlFor="companyName" className="block mb-1">Company Name</label>
+            <input
+              type="text"
+              id="companyName"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              required
+              className="w-full px-3 py-2 border rounded"
+            />
+          </div>
+        )}
         <button type="submit" className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
           Register
         </button>

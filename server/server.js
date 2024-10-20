@@ -4,8 +4,27 @@ import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
 import session from 'express-session';
 import MongoStore from 'connect-mongo';
+import multer from 'multer';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
+
+// Get the directory name of the current module
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/')
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + path.extname(file.originalname))
+  }
+});
+
+const upload = multer({ storage: storage });
 
 const app = express();
 app.use(express.json());
@@ -30,7 +49,8 @@ const userSchema = new mongoose.Schema({
   email: { type: String, unique: true },
   password: String,
   userType: { type: String, enum: ['jobseeker', 'employer'] },
-  resume: String // For jobseekers
+  resume: String, // For jobseekers
+  companyName: String // For employers
 });
 
 const User = mongoose.model('User', userSchema);
@@ -57,9 +77,13 @@ const isAuthenticated = (req, res, next) => {
 // Register route
 app.post('/api/register', async (req, res) => {
   try {
-    const { name, email, password, userType } = req.body;
+    const { name, email, password, userType, companyName } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ name, email, password: hashedPassword, userType });
+    const userData = { name, email, password: hashedPassword, userType };
+    if (userType === 'employer') {
+      userData.companyName = companyName;
+    }
+    const user = new User(userData);
     await user.save();
     req.session.userId = user._id;
     res.json({ message: 'Registered successfully' });
@@ -133,16 +157,45 @@ app.get('/api/employer/job-postings', isAuthenticated, async (req, res) => {
 });
 
 // Upload resume (for jobseekers)
-app.post('/api/jobseeker/upload-resume', isAuthenticated, async (req, res) => {
+app.post('/api/jobseeker/upload-resume', isAuthenticated, upload.single('resume'), async (req, res) => {
   try {
-    // In a real-world scenario, you'd handle file upload here
-    // For this example, we'll just update the user's resume field with a placeholder
-    await User.findByIdAndUpdate(req.session.userId, { resume: 'resume_url_placeholder' });
-    res.json({ message: 'Resume uploaded successfully' });
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+    const resumeUrl = `/uploads/${req.file.filename}`;
+    const updatedUser = await User.findByIdAndUpdate(
+      req.session.userId, 
+      { resume: resumeUrl },
+      { new: true }
+    );
+    if (!updatedUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ message: 'Resume uploaded successfully', resumeUrl });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error('Error uploading resume:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// Add a new route to get user profile
+app.get('/api/user/profile', isAuthenticated, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId).select('-password');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(user);
+  } catch (error) {
+    console.error('Error fetching user profile:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Serve static files from the uploads directory
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+const PORT = process.env.PORT || 5001;  // Change 5000 to 5001 or any other available port
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
